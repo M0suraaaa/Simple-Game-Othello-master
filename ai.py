@@ -1,4 +1,6 @@
-"""ai.py - Fungsi evaluasi dan MiniMax + Alpha-Beta Pruning."""
+"""ai.py - Fungsi evaluasi, MiniMax, Alpha-Beta Pruning, dan statistik pencarian."""
+
+import time
 
 from board import (apply_move, count_discs, game_over, get_valid_moves)
 
@@ -14,6 +16,76 @@ WEIGHTS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Statistik pencarian
+# ---------------------------------------------------------------------------
+class SearchStats:
+    """
+    Mencatat parameter pembanding untuk setiap langkah yang dipilih AI.
+
+    Definisi:
+      - simpul diperiksa : berapa kali fungsi pencarian dipanggil (satu panggilan
+                           = satu keadaan papan yang dikunjungi) untuk satu langkah.
+      - cabang dipotong  : jumlah langkah (cabang) yang TIDAK diperiksa karena
+                           alpha >= beta. Yang dihitung cabang langsung yang
+                           dilewati, bukan seluruh turunannya. MiniMax murni
+                           selalu bernilai 0.
+      - waktu            : lama memilih satu langkah, dalam milidetik.
+    """
+
+    def __init__(self):
+        self.times_ms = []     # waktu tiap langkah
+        self.nodes = []        # simpul diperiksa tiap langkah
+        self.pruned = []       # cabang dipotong tiap langkah
+
+    def record(self, elapsed_s, nodes, pruned):
+        self.times_ms.append(elapsed_s * 1000)
+        self.nodes.append(nodes)
+        self.pruned.append(pruned)
+
+    def reset(self):
+        self.times_ms.clear()
+        self.nodes.clear()
+        self.pruned.clear()
+
+    def summary(self):
+        n = len(self.times_ms)
+        if n == 0:
+            return {"langkah": 0}
+        return {
+            "langkah": n,
+            "waktu_total_ms": sum(self.times_ms),
+            "waktu_rata2_ms": sum(self.times_ms) / n,
+            "waktu_maks_ms": max(self.times_ms),
+            "simpul_rata2": sum(self.nodes) / n,
+            "simpul_maks": max(self.nodes),
+            "simpul_total": sum(self.nodes),
+            "dipotong_rata2": sum(self.pruned) / n,
+            "dipotong_total": sum(self.pruned),
+        }
+
+    def __str__(self):
+        s = self.summary()
+        if s["langkah"] == 0:
+            return "(belum ada data)"
+        return (f"{s['langkah']} langkah | "
+                f"waktu rata2 {s['waktu_rata2_ms']:.1f} ms, maks {s['waktu_maks_ms']:.1f} ms | "
+                f"simpul rata2 {s['simpul_rata2']:.0f} | "
+                f"dipotong rata2 {s['dipotong_rata2']:.0f}")
+
+
+class _Counter:
+    """Penghitung sementara untuk SATU kali pencarian."""
+    __slots__ = ("nodes", "pruned")
+
+    def __init__(self):
+        self.nodes = 0
+        self.pruned = 0
+
+
+# ---------------------------------------------------------------------------
+# Fungsi evaluasi
+# ---------------------------------------------------------------------------
 def evaluate(board, player):
     """Fungsi evaluasi dari sudut pandang `player`."""
     black, white = count_discs(board)
@@ -33,10 +105,6 @@ def evaluate(board, player):
     opp_moves = len(get_valid_moves(board, opp))
     mobility = 5 * (my_moves - opp_moves)
 
-    #example
-    #player 8 langkah, lawan 3 langkah
-    #5 x (8-3)= +25 >> nilai ini dipakai oleh minimax untuk pertimbangan langkah
-
     # 3. Selisih disk, bobotnya naik di akhir permainan
     total = black + white
     disc_diff = (black - white) * player
@@ -44,58 +112,118 @@ def evaluate(board, player):
 
     return positional + mobility + disc_score
 
-#example
-#positional = +40
-#mobility   = +25
-#disc_score =  +3
-#-------------------
-#skor akhir = +68
+
+def _ordered_moves(board, current):
+    """Langkah legal, kotak bernilai tinggi lebih dulu (dipakai kedua algoritma)."""
+    moves = get_valid_moves(board, current)
+    moves.sort(key=lambda m: WEIGHTS[m[0]][m[1]], reverse=True)
+    return moves
 
 
-def alphabeta(board, depth, alpha, beta, current, ai):
-    """
-    current : pemain yang sedang giliran (BLACK / WHITE)
-    ai      : pemain yang dimaksimalkan skornya
-    return  : (skor, langkah_terbaik)
-    """
+# ---------------------------------------------------------------------------
+# MiniMax murni (tanpa pruning)
+# ---------------------------------------------------------------------------
+def minimax(board, depth, current, ai, counter=None):
+    """return (skor, langkah_terbaik)."""
+    if counter is not None:
+        counter.nodes += 1
+
     if depth == 0 or game_over(board):
         return evaluate(board, ai), None
 
-    moves = get_valid_moves(board, current)
+    moves = _ordered_moves(board, current)
 
-    # Pass: pemain tidak punya langkah, giliran pindah ke lawan
-    if not moves:
-        score, _ = alphabeta(board, depth - 1, alpha, beta, -current, ai)
+    if not moves:  # pass
+        score, _ = minimax(board, depth - 1, -current, ai, counter)
         return score, None
-
-    # Move ordering: coba kotak bernilai tinggi dulu supaya pruning lebih efektif
-    moves.sort(key=lambda m: WEIGHTS[m[0]][m[1]], reverse=True)
 
     best_move = None
     if current == ai:  # MAX
         value = float('-inf')
         for move in moves:
-            new_board = apply_move(board, move, current)
-            score, _ = alphabeta(new_board, depth - 1, alpha, beta, -current, ai)
-            if score > value: 
+            score, _ = minimax(apply_move(board, move, current), depth - 1,
+                               -current, ai, counter)
+            if score > value:
                 value, best_move = score, move
-            alpha = max(alpha, value)
-            if alpha >= beta:
-                break  # pruning
-        return value, best_move
     else:              # MIN
         value = float('inf')
         for move in moves:
-            new_board = apply_move(board, move, current)
-            score, _ = alphabeta(new_board, depth - 1, alpha, beta, -current, ai)
+            score, _ = minimax(apply_move(board, move, current), depth - 1,
+                               -current, ai, counter)
+            if score < value:
+                value, best_move = score, move
+    return value, best_move
+
+
+# ---------------------------------------------------------------------------
+# MiniMax + Alpha-Beta Pruning
+# ---------------------------------------------------------------------------
+def alphabeta(board, depth, alpha, beta, current, ai, counter=None):
+    """
+    current : pemain yang sedang giliran (BLACK / WHITE)
+    ai      : pemain yang dimaksimalkan skornya
+    return  : (skor, langkah_terbaik)
+    """
+    if counter is not None:
+        counter.nodes += 1
+
+    if depth == 0 or game_over(board):
+        return evaluate(board, ai), None
+
+    moves = _ordered_moves(board, current)
+
+    # Pass: pemain tidak punya langkah, giliran pindah ke lawan
+    if not moves:
+        score, _ = alphabeta(board, depth - 1, alpha, beta, -current, ai, counter)
+        return score, None
+
+    best_move = None
+    if current == ai:  # MAX
+        value = float('-inf')
+        for i, move in enumerate(moves):
+            score, _ = alphabeta(apply_move(board, move, current), depth - 1,
+                                 alpha, beta, -current, ai, counter)
+            if score > value:
+                value, best_move = score, move
+            alpha = max(alpha, value)
+            if alpha >= beta:
+                if counter is not None:
+                    counter.pruned += len(moves) - i - 1  # cabang yang dilewati
+                break
+        return value, best_move
+    else:              # MIN
+        value = float('inf')
+        for i, move in enumerate(moves):
+            score, _ = alphabeta(apply_move(board, move, current), depth - 1,
+                                 alpha, beta, -current, ai, counter)
             if score < value:
                 value, best_move = score, move
             beta = min(beta, value)
             if alpha >= beta:
-                break  # pruning
+                if counter is not None:
+                    counter.pruned += len(moves) - i - 1
+                break
         return value, best_move
 
 
-def ai_choose_move(board, player, depth):
-    _, move = alphabeta(board, depth, float('-inf'), float('inf'), player, player)
+# ---------------------------------------------------------------------------
+# Antarmuka untuk game loop dan pengujian
+# ---------------------------------------------------------------------------
+def ai_choose_move(board, player, depth, algo="alphabeta", stats=None):
+    """
+    Memilih langkah untuk `player`.
+    algo  : "alphabeta" (default) atau "minimax"
+    stats : objek SearchStats; bila diberikan, waktu/simpul/pruning dicatat.
+    """
+    counter = _Counter()
+    start = time.perf_counter()
+    if algo == "minimax":
+        _, move = minimax(board, depth, player, player, counter)
+    else:
+        _, move = alphabeta(board, depth, float('-inf'), float('inf'),
+                            player, player, counter)
+    elapsed = time.perf_counter() - start
+
+    if stats is not None:
+        stats.record(elapsed, counter.nodes, counter.pruned)
     return move
