@@ -207,18 +207,50 @@ def alphabeta(board, depth, alpha, beta, current, ai, counter=None):
 
 
 # ---------------------------------------------------------------------------
+# Greedy (algoritma pembanding, tanpa lookahead)
+# ---------------------------------------------------------------------------
+def greedy(board, player, counter=None):
+    """
+    Memilih langkah yang memberi jumlah disk terbanyak sekarang juga
+    (= langkah yang membalik disk lawan paling banyak). Tidak memikirkan
+    balasan lawan, tidak memakai WEIGHTS/mobility, dan tidak mengenal depth.
+    return : (skor, langkah_terbaik)
+    """
+    if counter is not None:
+        counter.nodes += 1                    # simpul akar
+
+    moves = get_valid_moves(board, player)
+    if not moves:
+        return evaluate(board, player), None
+
+    best_move, best_score = None, float('-inf')
+    for move in moves:
+        child = apply_move(board, move, player)
+        if counter is not None:
+            counter.nodes += 1                # satu simpul per langkah kandidat
+        black, white = count_discs(child)
+        score = (black - white) * player      # selisih disk setelah langkah
+        if score > best_score:                # seri -> langkah pertama yang ditemukan
+            best_score, best_move = score, move
+    return best_score, best_move
+
+
+# ---------------------------------------------------------------------------
 # Antarmuka untuk game loop dan pengujian
 # ---------------------------------------------------------------------------
 def ai_choose_move(board, player, depth, algo="alphabeta", stats=None):
     """
     Memilih langkah untuk `player`.
-    algo  : "alphabeta" (default) atau "minimax"
+    algo  : "alphabeta" (default), "minimax", atau "greedy"
+            (greedy tidak memakai `depth`)
     stats : objek SearchStats; bila diberikan, waktu/simpul/pruning dicatat.
     """
     counter = _Counter()
     start = time.perf_counter()
     if algo == "minimax":
         _, move = minimax(board, depth, player, player, counter)
+    elif algo == "greedy":
+        _, move = greedy(board, player, counter)
     else:
         _, move = alphabeta(board, depth, float('-inf'), float('inf'),
                             player, player, counter)

@@ -5,7 +5,7 @@ oleh arena AI vs AI nanti.
 """
 
 LEVEL_LABEL = {1: "Mudah", 3: "Sedang", 4: "Sulit"}
-ALGO_LABEL = {"alphabeta": "Alpha-Beta", "minimax": "MiniMax"}
+ALGO_LABEL = {"alphabeta": "Alpha-Beta", "minimax": "MiniMax", "greedy": "Greedy"}
 
 # (judul kolom, kunci pada baris)
 COLUMNS = [
